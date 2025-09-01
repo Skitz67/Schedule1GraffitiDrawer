@@ -1,90 +1,94 @@
-import re
 import pyautogui
 import time
-import os
+import re
 
-# Canvas corners
-CANVAS_TOP_LEFT = (724, 121)
-CANVAS_BOTTOM_RIGHT = (1815, 835)
+# === CONFIGURATION ===
+# Canvas corners (from your earlier message)
+CANVAS_X0, CANVAS_Y0 = 724, 121
+CANVAS_X1, CANVAS_Y1 = 1815, 835
 
-# Parse G-code file
+# === FUNCTIONS ===
 def parse_gcode(file_path):
+    """
+    Parse G-code and extract G0/G1 moves as a list of (x, y, pen_down).
+    """
     points = []
-    with open(file_path, "r") as f:
-        x, y = 0, 0
+    current_x, current_y = 0, 0
+    pen_down = False
+
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         for line in f:
             line = line.strip()
-            if line.startswith(("G0", "G1")):  # movement commands
-                cmd = "G1" if line.startswith("G1") else "G0"
-                x_match = re.search(r"X([-+]?\d*\.?\d+)", line)
-                y_match = re.search(r"Y([-+]?\d*\.?\d+)", line)
+            if not line or line.startswith(';'):
+                continue
 
-                if x_match:
-                    x = float(x_match.group(1))
-                if y_match:
-                    y = float(y_match.group(1))
+            # Detect G0 (travel) vs G1 (drawing)
+            if line.startswith("G0") or line.startswith("G00"):
+                pen_down = False
+            elif line.startswith("G1") or line.startswith("G01"):
+                pen_down = True
 
-                points.append((cmd, x, y))
+            # Extract X and Y if present
+            x_match = re.search(r'X([-+]?\d*\.?\d+)', line)
+            y_match = re.search(r'Y([-+]?\d*\.?\d+)', line)
+
+            if x_match:
+                current_x = float(x_match.group(1))
+            if y_match:
+                current_y = float(y_match.group(1))
+
+            if x_match or y_match:
+                points.append((current_x, current_y, pen_down))
+
     return points
 
-def normalize_and_scale(points):
-    xs = [p[1] for p in points]
-    ys = [p[2] for p in points]
 
-    min_x, max_x = min(xs), max(xs)
-    min_y, max_y = min(ys), max(ys)
+def get_bounds(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return min(xs), max(xs), min(ys), max(ys)
 
-    width = max_x - min_x
-    height = max_y - min_y
 
-    canvas_width = CANVAS_BOTTOM_RIGHT[0] - CANVAS_TOP_LEFT[0]
-    canvas_height = CANVAS_BOTTOM_RIGHT[1] - CANVAS_TOP_LEFT[1]
+def map_to_canvas(x, y, bounds):
+    min_x, max_x, min_y, max_y = bounds
+    canvas_width = CANVAS_X1 - CANVAS_X0
+    canvas_height = CANVAS_Y1 - CANVAS_Y0
 
-    scale = min(canvas_width / width, canvas_height / height)
+    cx = CANVAS_X0 + ((x - min_x) / (max_x - min_x)) * canvas_width
+    cy = CANVAS_Y0 + ((y - min_y) / (max_y - min_y)) * canvas_height
+    return cx, cy
 
-    scaled_points = []
-    for cmd, x, y in points:
-        sx = CANVAS_TOP_LEFT[0] + (x - min_x) * scale
-        sy = CANVAS_TOP_LEFT[1] + (max_y - y) * scale  # flip Y so it's not upside down
-        scaled_points.append((cmd, sx, sy))
-    return scaled_points
 
-def draw_gcode(points):
-    print(f"[INFO] Drawing {len(points)} points from G-code...")
-    pen_down = False
-    for cmd, x, y in points:
-        if cmd == "G0" and pen_down:
+def draw_path(points):
+    bounds = get_bounds(points)
+    print(f"[INFO] G-code bounds: {bounds}")
+
+    print("[INFO] Starting in 3 seconds - switch to your graffiti window!")
+    time.sleep(3)
+
+    last_pen_state = False
+
+    for x, y, pen_down in points:
+        cx, cy = map_to_canvas(x, y, bounds)
+
+        if pen_down and not last_pen_state:
+            pyautogui.mouseDown(cx, cy)
+        elif not pen_down and last_pen_state:
             pyautogui.mouseUp()
-            pen_down = False
 
-        pyautogui.moveTo(x, y, duration=0.002)
+        pyautogui.moveTo(cx, cy)  # Smooth motion
+        last_pen_state = pen_down
 
-        if cmd == "G1" and not pen_down:
-            pyautogui.mouseDown()
-            pen_down = True
+    pyautogui.mouseUp()  # Ensure we release at the end
 
-    if pen_down:
-        pyautogui.mouseUp()
 
+# === MAIN SCRIPT ===
 if __name__ == "__main__":
     gcode_path = input("Enter full path to the G-code file: ").strip('"')
-
-    if not os.path.isfile(gcode_path):
-        print("[ERROR] File not found. Please check the path and try again.")
-        exit(1)
-
     print("[INFO] Parsing G-code...")
     points = parse_gcode(gcode_path)
 
     if not points:
-        print("[ERROR] No G0/G1 movements found in file.")
-        exit(1)
-
-    scaled_points = normalize_and_scale(points)
-
-    print("[INFO] Switch to the Graffiti window now! Starting in 3 seconds...")
-    time.sleep(3)
-
-    draw_gcode(scaled_points)
-
-    print("[DONE] Finished drawing.")
+        print("[ERROR] No points found in G-code.")
+    else:
+        draw_path(points)
