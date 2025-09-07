@@ -51,12 +51,29 @@ def get_bounds(points):
 
 def map_to_canvas(x, y, bounds):
     min_x, max_x, min_y, max_y = bounds
+    gcode_width = max_x - min_x
+    gcode_height = max_y - min_y
+
     canvas_width = CANVAS_X1 - CANVAS_X0
     canvas_height = CANVAS_Y1 - CANVAS_Y0
 
-    cx = CANVAS_X0 + ((x - min_x) / (max_x - min_x)) * canvas_width
-    cy = CANVAS_Y0 + ((y - min_y) / (max_y - min_y)) * canvas_height
+    # --- Maintain aspect ratio ---
+    scale = min(canvas_width / gcode_width, canvas_height / gcode_height)
+
+    scaled_width = gcode_width * scale
+    scaled_height = gcode_height * scale
+
+    # Center the drawing in the canvas
+    offset_x = CANVAS_X0 + (canvas_width - scaled_width) / 2
+    offset_y = CANVAS_Y0 + (canvas_height - scaled_height) / 2
+
+    # Flip Y axis: invert relative to min_y/max_y range
+    flipped_y = max_y - (y - min_y)
+
+    cx = offset_x + (x - min_x) * scale
+    cy = offset_y + (flipped_y - min_y) * scale
     return cx, cy
+
 
 
 def draw_path(points):
@@ -76,10 +93,10 @@ def draw_path(points):
         elif not pen_down and last_pen_state:
             pyautogui.mouseUp()
 
-        pyautogui.moveTo(cx, cy)  # Smooth motion
+        pyautogui.moveTo(cx, cy, duration=0.01)  # Smooth motion
         last_pen_state = pen_down
 
-    pyautogui.mouseUp()  # Ensure we release at the end
+    pyautogui.mouseUp()  # Ensure pen is lifted at end
 
 
 # === MAIN SCRIPT ===
